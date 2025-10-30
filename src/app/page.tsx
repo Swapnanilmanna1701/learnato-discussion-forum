@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useSession } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -8,10 +10,20 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { MessageSquare, ArrowUp, Plus, Search, RefreshCw } from "lucide-react";
+import { MessageSquare, ArrowUp, Plus, Search, User, LogOut, LogIn } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import Link from "next/link";
 import { useRealtimeUpdates } from "@/hooks/useRealtimeUpdates";
 import { toast } from "sonner";
+import { authClient } from "@/lib/auth-client";
 
 type Post = {
   id: number;
@@ -24,6 +36,8 @@ type Post = {
 };
 
 export default function ForumPage() {
+  const { data: session, isPending, refetch } = useSession();
+  const router = useRouter();
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortBy, setSortBy] = useState("date");
@@ -34,7 +48,6 @@ export default function ForumPage() {
   // Create post form state
   const [newPostTitle, setNewPostTitle] = useState("");
   const [newPostContent, setNewPostContent] = useState("");
-  const [newPostAuthor, setNewPostAuthor] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
@@ -78,36 +91,53 @@ export default function ForumPage() {
   const handleCreatePost = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!newPostTitle.trim() || !newPostContent.trim() || !newPostAuthor.trim()) {
-      alert("Please fill in all fields");
+    if (!session?.user) {
+      toast.error("Please sign in to create posts");
+      router.push("/login");
+      return;
+    }
+    
+    if (!newPostTitle.trim() || !newPostContent.trim()) {
+      toast.error("Please fill in all fields");
       return;
     }
 
     try {
       setIsSubmitting(true);
+      const token = localStorage.getItem("bearer_token");
       const response = await fetch("/api/posts", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
         body: JSON.stringify({
           title: newPostTitle,
           content: newPostContent,
-          author: newPostAuthor,
         }),
       });
 
-      if (!response.ok) throw new Error("Failed to create post");
+      if (!response.ok) {
+        if (response.status === 401) {
+          toast.error("Please sign in to create posts");
+          router.push("/login");
+          return;
+        }
+        throw new Error("Failed to create post");
+      }
 
       // Reset form and close dialog
       setNewPostTitle("");
       setNewPostContent("");
-      setNewPostAuthor("");
       setIsCreateDialogOpen(false);
+      
+      toast.success("Post created successfully!");
       
       // Refresh posts
       fetchPosts();
     } catch (error) {
       console.error("Error creating post:", error);
-      alert("Failed to create post");
+      toast.error("Failed to create post");
     } finally {
       setIsSubmitting(false);
     }
@@ -128,6 +158,46 @@ export default function ForumPage() {
     } catch (error) {
       console.error("Error upvoting post:", error);
     }
+  };
+
+  const handleSignOut = async () => {
+    const token = localStorage.getItem("bearer_token");
+
+    const { error } = await authClient.signOut({
+      fetchOptions: {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      },
+    });
+    
+    if (error?.code) {
+      toast.error("Failed to sign out");
+    } else {
+      localStorage.removeItem("bearer_token");
+      refetch();
+      toast.success("Signed out successfully");
+      router.push("/");
+    }
+  };
+
+  const handleNewPostClick = () => {
+    if (!session?.user) {
+      toast.error("Please sign in to create posts");
+      router.push("/login");
+      return;
+    }
+    setIsCreateDialogOpen(true);
+  };
+
+  const getInitials = (name?: string) => {
+    if (!name) return "U";
+    return name
+      .split(" ")
+      .map((n) => n[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2);
   };
 
   const filteredPosts = posts.filter(post =>
@@ -161,68 +231,108 @@ export default function ForumPage() {
               <h1 className="text-2xl font-bold">Discussion Forum</h1>
             </div>
             
-            <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-              <DialogTrigger asChild>
-                <Button className="gap-2">
-                  <Plus className="h-4 w-4" />
-                  New Post
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="sm:max-w-[600px]">
-                <DialogHeader>
-                  <DialogTitle>Create New Post</DialogTitle>
-                  <DialogDescription>
-                    Share your thoughts with the community
-                  </DialogDescription>
-                </DialogHeader>
-                <form onSubmit={handleCreatePost} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="author">Your Name</Label>
-                    <Input
-                      id="author"
-                      placeholder="Enter your name"
-                      value={newPostAuthor}
-                      onChange={(e) => setNewPostAuthor(e.target.value)}
-                      disabled={isSubmitting}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="title">Title</Label>
-                    <Input
-                      id="title"
-                      placeholder="What's your post about?"
-                      value={newPostTitle}
-                      onChange={(e) => setNewPostTitle(e.target.value)}
-                      disabled={isSubmitting}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="content">Content</Label>
-                    <Textarea
-                      id="content"
-                      placeholder="Share your thoughts..."
-                      value={newPostContent}
-                      onChange={(e) => setNewPostContent(e.target.value)}
-                      rows={6}
-                      disabled={isSubmitting}
-                    />
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setIsCreateDialogOpen(false)}
-                      disabled={isSubmitting}
-                    >
-                      Cancel
+            <div className="flex items-center gap-3">
+              <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button className="gap-2" onClick={handleNewPostClick}>
+                    <Plus className="h-4 w-4" />
+                    New Post
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[600px]">
+                  <DialogHeader>
+                    <DialogTitle>Create New Post</DialogTitle>
+                    <DialogDescription>
+                      Share your thoughts with the community
+                    </DialogDescription>
+                  </DialogHeader>
+                  <form onSubmit={handleCreatePost} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="title">Title</Label>
+                      <Input
+                        id="title"
+                        placeholder="What's your post about?"
+                        value={newPostTitle}
+                        onChange={(e) => setNewPostTitle(e.target.value)}
+                        disabled={isSubmitting}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="content">Content</Label>
+                      <Textarea
+                        id="content"
+                        placeholder="Share your thoughts..."
+                        value={newPostContent}
+                        onChange={(e) => setNewPostContent(e.target.value)}
+                        rows={6}
+                        disabled={isSubmitting}
+                      />
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setIsCreateDialogOpen(false)}
+                        disabled={isSubmitting}
+                      >
+                        Cancel
+                      </Button>
+                      <Button type="submit" disabled={isSubmitting}>
+                        {isSubmitting ? "Creating..." : "Create Post"}
+                      </Button>
+                    </div>
+                  </form>
+                </DialogContent>
+              </Dialog>
+
+              {/* Auth UI */}
+              {isPending ? (
+                <div className="h-10 w-10 rounded-full bg-muted animate-pulse" />
+              ) : session?.user ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" className="relative h-10 w-10 rounded-full">
+                      <Avatar className="h-10 w-10">
+                        <AvatarImage src={session.user.image || undefined} alt={session.user.name} />
+                        <AvatarFallback>{getInitials(session.user.name)}</AvatarFallback>
+                      </Avatar>
                     </Button>
-                    <Button type="submit" disabled={isSubmitting}>
-                      {isSubmitting ? "Creating..." : "Create Post"}
-                    </Button>
-                  </div>
-                </form>
-              </DialogContent>
-            </Dialog>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className="w-56" align="end">
+                    <DropdownMenuLabel>
+                      <div className="flex flex-col space-y-1">
+                        <p className="text-sm font-medium">{session.user.name}</p>
+                        <p className="text-xs text-muted-foreground">{session.user.email}</p>
+                      </div>
+                    </DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem asChild>
+                      <Link href="/profile" className="cursor-pointer">
+                        <User className="mr-2 h-4 w-4" />
+                        Profile
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={handleSignOut} className="cursor-pointer">
+                      <LogOut className="mr-2 h-4 w-4" />
+                      Sign Out
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="sm" asChild>
+                    <Link href="/login">
+                      <LogIn className="mr-2 h-4 w-4" />
+                      Sign In
+                    </Link>
+                  </Button>
+                  <Button size="sm" asChild>
+                    <Link href="/register">Sign Up</Link>
+                  </Button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </header>

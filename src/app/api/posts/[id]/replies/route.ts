@@ -2,12 +2,26 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { posts, replies } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { auth } from '@/lib/auth';
 
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
+    // Authenticate user
+    const session = await auth.api.getSession({ headers: request.headers });
+
+    if (!session) {
+      return NextResponse.json(
+        { 
+          error: 'Unauthorized - please sign in to reply',
+          code: 'UNAUTHORIZED'
+        },
+        { status: 401 }
+      );
+    }
+
     const { id } = params;
 
     // Validate id is a valid integer
@@ -25,7 +39,7 @@ export async function POST(
 
     // Parse request body
     const body = await request.json();
-    const { content, author, parentReplyId } = body;
+    const { content, parentReplyId } = body;
 
     // Validate required fields
     if (!content || typeof content !== 'string' || content.trim() === '') {
@@ -33,16 +47,6 @@ export async function POST(
         { 
           error: 'Content is required and must not be empty',
           code: 'MISSING_CONTENT'
-        },
-        { status: 400 }
-      );
-    }
-
-    if (!author || typeof author !== 'string' || author.trim() === '') {
-      return NextResponse.json(
-        { 
-          error: 'Author is required and must not be empty',
-          code: 'MISSING_AUTHOR'
         },
         { status: 400 }
       );
@@ -106,7 +110,8 @@ export async function POST(
       .values({
         postId,
         content: content.trim(),
-        author: author.trim(),
+        author: session.user.name,
+        userId: session.user.id,
         upvotes: 0,
         parentReplyId: parentReplyId ? parseInt(parentReplyId) : null,
         createdAt: now,

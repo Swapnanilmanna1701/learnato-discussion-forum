@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { posts } from '@/db/schema';
 import { eq, desc, asc } from 'drizzle-orm';
+import { auth } from '@/lib/auth';
 
 export async function GET(request: NextRequest) {
   try {
@@ -62,8 +63,18 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    // Authenticate user
+    const session = await auth.api.getSession({ headers: request.headers });
+
+    if (!session) {
+      return NextResponse.json({ 
+        error: 'Unauthorized - please sign in to create posts',
+        code: 'UNAUTHORIZED' 
+      }, { status: 401 });
+    }
+
     const body = await request.json();
-    const { title, content, author } = body;
+    const { title, content } = body;
 
     if (!title || typeof title !== 'string' || title.trim() === '') {
       return NextResponse.json({ 
@@ -79,20 +90,14 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    if (!author || typeof author !== 'string' || author.trim() === '') {
-      return NextResponse.json({ 
-        error: 'Author is required and must not be empty',
-        code: 'MISSING_AUTHOR' 
-      }, { status: 400 });
-    }
-
     const now = new Date().toISOString();
 
     const newPost = await db.insert(posts)
       .values({
         title: title.trim(),
         content: content.trim(),
-        author: author.trim(),
+        author: session.user.name,
+        userId: session.user.id,
         upvotes: 0,
         createdAt: now,
         updatedAt: now

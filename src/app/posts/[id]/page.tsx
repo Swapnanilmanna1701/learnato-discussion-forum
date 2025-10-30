@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useSession } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
 import { ArrowUp, ArrowLeft, MessageSquare, Send } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -35,6 +35,8 @@ type Reply = {
 };
 
 export default function PostDetailPage() {
+  const { data: session, isPending } = useSession();
+  const router = useRouter();
   const params = useParams();
   const postId = params.id as string;
 
@@ -44,7 +46,6 @@ export default function PostDetailPage() {
   
   // Reply form state
   const [replyContent, setReplyContent] = useState("");
-  const [replyAuthor, setReplyAuthor] = useState("");
   const [replyingTo, setReplyingTo] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -125,33 +126,49 @@ export default function PostDetailPage() {
   const handleSubmitReply = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!replyContent.trim() || !replyAuthor.trim()) {
-      alert("Please fill in all fields");
+    if (!session?.user) {
+      toast.error("Please sign in to reply");
+      router.push("/login");
+      return;
+    }
+
+    if (!replyContent.trim()) {
+      toast.error("Please enter your reply");
       return;
     }
 
     try {
       setIsSubmitting(true);
+      const token = localStorage.getItem("bearer_token");
       const response = await fetch(`/api/posts/${postId}/replies`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
         body: JSON.stringify({
           content: replyContent,
-          author: replyAuthor,
           parentReplyId: replyingTo,
         }),
       });
 
-      if (!response.ok) throw new Error("Failed to create reply");
+      if (!response.ok) {
+        if (response.status === 401) {
+          toast.error("Please sign in to reply");
+          router.push("/login");
+          return;
+        }
+        throw new Error("Failed to create reply");
+      }
 
       const newReply = await response.json();
       setReplies([...replies, newReply]);
       setReplyContent("");
-      setReplyAuthor("");
       setReplyingTo(null);
+      toast.success("Reply posted successfully!");
     } catch (error) {
       console.error("Error creating reply:", error);
-      alert("Failed to create reply");
+      toast.error("Failed to create reply");
     } finally {
       setIsSubmitting(false);
     }
@@ -181,7 +198,6 @@ export default function PostDetailPage() {
   const ReplyComponent = ({ reply, depth = 0 }: { reply: Reply; depth?: number }) => {
     const childReplies = buildReplyTree(reply.id);
     const maxDepth = 5;
-    const indentClass = depth >= maxDepth ? "" : `ml-${Math.min(depth, 5) * 4}`;
 
     return (
       <div className={`${depth > 0 ? 'mt-4' : ''}`}>
@@ -208,18 +224,20 @@ export default function PostDetailPage() {
           </CardHeader>
           <CardContent className="pt-0">
             <p className="text-sm whitespace-pre-wrap">{reply.content}</p>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mt-2 h-8 text-xs"
-              onClick={() => {
-                setReplyingTo(reply.id);
-                window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-              }}
-            >
-              <MessageSquare className="h-3 w-3 mr-1" />
-              Reply
-            </Button>
+            {session?.user && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-2 h-8 text-xs"
+                onClick={() => {
+                  setReplyingTo(reply.id);
+                  window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+                }}
+              >
+                <MessageSquare className="h-3 w-3 mr-1" />
+                Reply
+              </Button>
+            )}
           </CardContent>
         </Card>
         
@@ -383,33 +401,37 @@ export default function PostDetailPage() {
             )}
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmitReply} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="reply-author">Your Name</Label>
-                <Input
-                  id="reply-author"
-                  placeholder="Enter your name"
-                  value={replyAuthor}
-                  onChange={(e) => setReplyAuthor(e.target.value)}
-                  disabled={isSubmitting}
-                />
+            {!session?.user ? (
+              <div className="text-center py-6">
+                <p className="text-muted-foreground mb-4">Sign in to join the discussion</p>
+                <div className="flex gap-2 justify-center">
+                  <Button asChild variant="outline">
+                    <Link href="/login">Sign In</Link>
+                  </Button>
+                  <Button asChild>
+                    <Link href="/register">Sign Up</Link>
+                  </Button>
+                </div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="reply-content">Your Reply</Label>
-                <Textarea
-                  id="reply-content"
-                  placeholder="Share your thoughts..."
-                  value={replyContent}
-                  onChange={(e) => setReplyContent(e.target.value)}
-                  rows={4}
-                  disabled={isSubmitting}
-                />
-              </div>
-              <Button type="submit" disabled={isSubmitting} className="gap-2">
-                <Send className="h-4 w-4" />
-                {isSubmitting ? "Posting..." : "Post Reply"}
-              </Button>
-            </form>
+            ) : (
+              <form onSubmit={handleSubmitReply} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="reply-content">Your Reply</Label>
+                  <Textarea
+                    id="reply-content"
+                    placeholder="Share your thoughts..."
+                    value={replyContent}
+                    onChange={(e) => setReplyContent(e.target.value)}
+                    rows={4}
+                    disabled={isSubmitting}
+                  />
+                </div>
+                <Button type="submit" disabled={isSubmitting} className="gap-2">
+                  <Send className="h-4 w-4" />
+                  {isSubmitting ? "Posting..." : "Post Reply"}
+                </Button>
+              </form>
+            )}
           </CardContent>
         </Card>
       </main>
