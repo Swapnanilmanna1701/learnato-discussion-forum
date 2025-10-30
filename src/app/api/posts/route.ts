@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { posts } from '@/db/schema';
+import { posts, user } from '@/db/schema';
 import { eq, desc, asc } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 
@@ -41,12 +41,25 @@ export async function GET(request: NextRequest) {
       }, { status: 400 });
     }
 
-    let query = db.select().from(posts);
-
     const sortField = sort === 'date' ? posts.createdAt : posts.upvotes;
     const orderFn = order === 'asc' ? asc : desc;
 
-    const results = await query
+    // Join with user table to get profile images
+    const results = await db
+      .select({
+        id: posts.id,
+        title: posts.title,
+        content: posts.content,
+        author: posts.author,
+        userId: posts.userId,
+        upvotes: posts.upvotes,
+        images: posts.images,
+        createdAt: posts.createdAt,
+        updatedAt: posts.updatedAt,
+        userImage: user.image,
+      })
+      .from(posts)
+      .leftJoin(user, eq(posts.userId, user.id))
       .orderBy(orderFn(sortField))
       .limit(limit)
       .offset(offset);
@@ -74,7 +87,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { title, content } = body;
+    const { title, content, images } = body;
 
     if (!title || typeof title !== 'string' || title.trim() === '') {
       return NextResponse.json({ 
@@ -90,6 +103,14 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
+    // Validate images if provided
+    if (images && !Array.isArray(images)) {
+      return NextResponse.json({ 
+        error: 'Images must be an array',
+        code: 'INVALID_IMAGES' 
+      }, { status: 400 });
+    }
+
     const now = new Date().toISOString();
 
     const newPost = await db.insert(posts)
@@ -99,6 +120,7 @@ export async function POST(request: NextRequest) {
         author: session.user.name,
         userId: session.user.id,
         upvotes: 0,
+        images: images || null,
         createdAt: now,
         updatedAt: now
       })
